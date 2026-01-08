@@ -1,10 +1,16 @@
-import { useState } from 'react';
-import { X, Mail, Phone, Check, Clock, AlertTriangle, FolderOpen, Zap, FileText, CheckCircle, Save } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Mail, Check, Clock, FolderOpen, FileText, CheckCircle, Save, Loader2, ExternalLink } from 'lucide-react';
 import { Client, PIPELINE_STAGES, PipelineStage } from '@/types/database';
 import { Button } from '@/components/ui/button';
-import { AvatarInitials } from '@/components/ui/avatar-initials';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { useClients } from '@/hooks/useClients';
+
+interface Document {
+  id: string;
+  name: string;
+  file_url: string;
+}
 
 interface LeadDetailModalProps {
   lead: Client;
@@ -14,18 +20,60 @@ interface LeadDetailModalProps {
   onOpenEmailDraft: (type: 'discovery' | 'chase' | 'letter', lead: Client) => void;
 }
 
-export function LeadDetailModal({ 
-  lead, 
-  onClose, 
-  onStageChange, 
+export function LeadDetailModal({
+  lead,
+  onClose,
+  onStageChange,
   onMarkAsClient,
-  onOpenEmailDraft 
+  onOpenEmailDraft
 }: LeadDetailModalProps) {
   const [selectedStage, setSelectedStage] = useState<PipelineStage>(lead.stage);
   const [saving, setSaving] = useState(false);
-  
+  const [actionItems, setActionItems] = useState('');
+  const [originalActionItems, setOriginalActionItems] = useState('');
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [loadingNotes, setLoadingNotes] = useState(true);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(true);
+
+  const { getMeetingActionItems, updateMeetingActionItems, createMeetingWithActionItems, getClientDocuments } = useClients();
+
   const stage = PIPELINE_STAGES[lead.stage];
   const hasChanges = selectedStage !== lead.stage;
+  const hasNotesChanges = actionItems !== originalActionItems;
+
+  // Fetch action items from meetings table
+  useEffect(() => {
+    const fetchActionItems = async () => {
+      setLoadingNotes(true);
+      const meeting = await getMeetingActionItems(lead.id);
+      if (meeting) {
+        setActionItems(meeting.action_items || '');
+        setOriginalActionItems(meeting.action_items || '');
+        setMeetingId(meeting.id);
+      } else {
+        setActionItems('');
+        setOriginalActionItems('');
+        setMeetingId(null);
+      }
+      setLoadingNotes(false);
+    };
+
+    fetchActionItems();
+  }, [lead.id]);
+
+  // Fetch documents from documents table
+  useEffect(() => {
+    const fetchDocuments = async () => {
+      setLoadingDocs(true);
+      const docs = await getClientDocuments(lead.id);
+      setDocuments(docs);
+      setLoadingDocs(false);
+    };
+
+    fetchDocuments();
+  }, [lead.id]);
 
   const handleSaveStage = async () => {
     if (!hasChanges) return;
@@ -44,6 +92,28 @@ export function LeadDetailModal({
       onClose();
     }
     setSaving(false);
+  };
+
+  const handleSaveActionItems = async () => {
+    if (!hasNotesChanges) return;
+    setSavingNotes(true);
+
+    if (meetingId) {
+      // Update existing meeting
+      const success = await updateMeetingActionItems(meetingId, actionItems);
+      if (success) {
+        setOriginalActionItems(actionItems);
+      }
+    } else {
+      // Create new meeting record
+      const result = await createMeetingWithActionItems(lead.id, actionItems);
+      if (result) {
+        setMeetingId(result.id);
+        setOriginalActionItems(actionItems);
+      }
+    }
+
+    setSavingNotes(false);
   };
 
   const checklistItems = [
@@ -128,6 +198,36 @@ export function LeadDetailModal({
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Documents */}
+          <div className="px-6 py-5 border-b border-border">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3.5">
+              Documents
+            </h3>
+            {loadingDocs ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : documents.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {documents.map((doc) => (
+                  <a
+                    key={doc.id}
+                    href={doc.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-sm font-medium text-blue-700 transition-colors"
+                  >
+                    <FileText className="w-4 h-4" />
+                    {doc.name}
+                    <ExternalLink className="w-3 h-3 opacity-60" />
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No documents uploaded</p>
+            )}
           </div>
 
           {/* Quick Actions */}
@@ -217,17 +317,43 @@ export function LeadDetailModal({
             </div>
           </div>
 
-          {/* Notes */}
-          {lead.notes && (
-            <div className="px-6 py-5">
-              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3.5">
+          {/* Meeting Notes / Action Items */}
+          <div className="px-6 py-5">
+            <div className="flex items-center justify-between mb-3.5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                 Meeting Notes
               </h3>
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <p className="text-sm text-muted-foreground leading-relaxed">{lead.notes}</p>
-              </div>
+              {hasNotesChanges && (
+                <Button
+                  size="sm"
+                  onClick={handleSaveActionItems}
+                  disabled={savingNotes}
+                  className="bg-gradient-primary text-primary-foreground h-8"
+                >
+                  {savingNotes ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Save className="w-3 h-3 mr-1.5" />
+                      Save Notes
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
-          )}
+            {loadingNotes ? (
+              <div className="bg-secondary/50 rounded-xl p-4 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <textarea
+                value={actionItems}
+                onChange={(e) => setActionItems(e.target.value)}
+                placeholder="Add meeting notes or action items..."
+                className="w-full min-h-[120px] px-3.5 py-3 bg-secondary/50 border border-border rounded-xl text-sm text-foreground leading-relaxed resize-none focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 placeholder:text-muted-foreground"
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>

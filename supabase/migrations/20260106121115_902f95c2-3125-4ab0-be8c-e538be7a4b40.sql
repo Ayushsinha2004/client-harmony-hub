@@ -1,13 +1,31 @@
--- Create enums for the application
-CREATE TYPE public.client_status AS ENUM ('lead', 'active_client', 'inactive');
-CREATE TYPE public.pipeline_stage AS ENUM ('new_booking', 'discovery_complete', 'awaiting_data', 'recommendation_call', 'letter_pending', 'awaiting_signature');
-CREATE TYPE public.meeting_type AS ENUM ('discovery_call', 'recommendation_call', 'review_call', 'general');
-CREATE TYPE public.email_status AS ENUM ('draft', 'scheduled', 'sent', 'failed');
-CREATE TYPE public.document_type AS ENUM ('id_document', 'proof_of_address', 'bank_statement', 'payslip', 'p60', 'other');
-CREATE TYPE public.signature_status AS ENUM ('draft', 'sent', 'viewed', 'signed', 'expired');
+-- Ensure basic schema permissions
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA public TO authenticated;
+
+-- Create enums for the application (safe if they already exist)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'client_status') THEN
+    CREATE TYPE public.client_status AS ENUM ('lead', 'active_client', 'inactive');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pipeline_stage') THEN
+    CREATE TYPE public.pipeline_stage AS ENUM ('new_booking', 'discovery_complete', 'awaiting_data', 'recommendation_call', 'letter_pending', 'awaiting_signature');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'meeting_type') THEN
+    CREATE TYPE public.meeting_type AS ENUM ('discovery_call', 'recommendation_call', 'review_call', 'general');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'email_status') THEN
+    CREATE TYPE public.email_status AS ENUM ('draft', 'scheduled', 'sent', 'failed');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'document_type') THEN
+    CREATE TYPE public.document_type AS ENUM ('id_document', 'proof_of_address', 'bank_statement', 'payslip', 'p60', 'other');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'signature_status') THEN
+    CREATE TYPE public.signature_status AS ENUM ('draft', 'sent', 'viewed', 'signed', 'expired');
+  END IF;
+END $$;
 
 -- Create team_members table first (no dependencies)
-CREATE TABLE public.team_members (
+CREATE TABLE IF NOT EXISTS public.team_members (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   email character varying NOT NULL UNIQUE,
   full_name character varying NOT NULL,
@@ -17,7 +35,7 @@ CREATE TABLE public.team_members (
 );
 
 -- Create clients table (depends on team_members)
-CREATE TABLE public.clients (
+CREATE TABLE IF NOT EXISTS public.clients (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   full_name character varying NOT NULL,
   email character varying NOT NULL UNIQUE,
@@ -44,7 +62,7 @@ CREATE TABLE public.clients (
 );
 
 -- Create bookings table (depends on clients)
-CREATE TABLE public.bookings (
+CREATE TABLE IF NOT EXISTS public.bookings (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid REFERENCES public.clients(id) ON DELETE CASCADE,
   calendly_event_id character varying UNIQUE,
@@ -57,7 +75,7 @@ CREATE TABLE public.bookings (
 );
 
 -- Create meetings table (depends on clients, bookings, team_members)
-CREATE TABLE public.meetings (
+CREATE TABLE IF NOT EXISTS public.meetings (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   booking_id uuid REFERENCES public.bookings(id) ON DELETE SET NULL,
@@ -74,7 +92,7 @@ CREATE TABLE public.meetings (
 );
 
 -- Create emails table (depends on clients, team_members)
-CREATE TABLE public.emails (
+CREATE TABLE IF NOT EXISTS public.emails (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   subject character varying NOT NULL,
@@ -89,7 +107,7 @@ CREATE TABLE public.emails (
 );
 
 -- Create chases table (depends on clients, emails)
-CREATE TABLE public.chases (
+CREATE TABLE IF NOT EXISTS public.chases (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   chase_type character varying NOT NULL,
@@ -98,7 +116,7 @@ CREATE TABLE public.chases (
 );
 
 -- Create documents table (depends on clients)
-CREATE TABLE public.documents (
+CREATE TABLE IF NOT EXISTS public.documents (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   name character varying NOT NULL,
@@ -109,7 +127,7 @@ CREATE TABLE public.documents (
 );
 
 -- Create signatures table (depends on clients)
-CREATE TABLE public.signatures (
+CREATE TABLE IF NOT EXISTS public.signatures (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   adobe_envelope_id character varying UNIQUE,
@@ -125,7 +143,7 @@ CREATE TABLE public.signatures (
 );
 
 -- Create activity_log table (depends on clients, team_members)
-CREATE TABLE public.activity_log (
+CREATE TABLE IF NOT EXISTS public.activity_log (
   id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   client_id uuid REFERENCES public.clients(id) ON DELETE CASCADE,
   action character varying NOT NULL,
@@ -135,17 +153,70 @@ CREATE TABLE public.activity_log (
 );
 
 -- Enable Row Level Security on all tables
-ALTER TABLE public.team_members ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.emails ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.chases ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.signatures ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.meetings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.emails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.chases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.signatures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.activity_log ENABLE ROW LEVEL SECURITY;
+
+-- Grant necessary permissions to the anon role
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon;
 
 -- Create RLS policies for all tables (allowing public read/write for now - will add auth later)
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow public read for team_members" ON public.team_members;
+    DROP POLICY IF EXISTS "Allow public insert for team_members" ON public.team_members;
+    DROP POLICY IF EXISTS "Allow public update for team_members" ON public.team_members;
+    DROP POLICY IF EXISTS "Allow public delete for team_members" ON public.team_members;
+    
+    DROP POLICY IF EXISTS "Allow public read for clients" ON public.clients;
+    DROP POLICY IF EXISTS "Allow public insert for clients" ON public.clients;
+    DROP POLICY IF EXISTS "Allow public update for clients" ON public.clients;
+    DROP POLICY IF EXISTS "Allow public delete for clients" ON public.clients;
+    
+    DROP POLICY IF EXISTS "Allow public read for bookings" ON public.bookings;
+    DROP POLICY IF EXISTS "Allow public insert for bookings" ON public.bookings;
+    DROP POLICY IF EXISTS "Allow public update for bookings" ON public.bookings;
+    DROP POLICY IF EXISTS "Allow public delete for bookings" ON public.bookings;
+    
+    DROP POLICY IF EXISTS "Allow public read for meetings" ON public.meetings;
+    DROP POLICY IF EXISTS "Allow public insert for meetings" ON public.meetings;
+    DROP POLICY IF EXISTS "Allow public update for meetings" ON public.meetings;
+    DROP POLICY IF EXISTS "Allow public delete for meetings" ON public.meetings;
+    
+    DROP POLICY IF EXISTS "Allow public read for emails" ON public.emails;
+    DROP POLICY IF EXISTS "Allow public insert for emails" ON public.emails;
+    DROP POLICY IF EXISTS "Allow public update for emails" ON public.emails;
+    DROP POLICY IF EXISTS "Allow public delete for emails" ON public.emails;
+    
+    DROP POLICY IF EXISTS "Allow public read for chases" ON public.chases;
+    DROP POLICY IF EXISTS "Allow public insert for chases" ON public.chases;
+    DROP POLICY IF EXISTS "Allow public update for chases" ON public.chases;
+    DROP POLICY IF EXISTS "Allow public delete for chases" ON public.chases;
+    
+    DROP POLICY IF EXISTS "Allow public read for documents" ON public.documents;
+    DROP POLICY IF EXISTS "Allow public insert for documents" ON public.documents;
+    DROP POLICY IF EXISTS "Allow public update for documents" ON public.documents;
+    DROP POLICY IF EXISTS "Allow public delete for documents" ON public.documents;
+    
+    DROP POLICY IF EXISTS "Allow public read for signatures" ON public.signatures;
+    DROP POLICY IF EXISTS "Allow public insert for signatures" ON public.signatures;
+    DROP POLICY IF EXISTS "Allow public update for signatures" ON public.signatures;
+    DROP POLICY IF EXISTS "Allow public delete for signatures" ON public.signatures;
+    
+    DROP POLICY IF EXISTS "Allow public read for activity_log" ON public.activity_log;
+    DROP POLICY IF EXISTS "Allow public insert for activity_log" ON public.activity_log;
+    DROP POLICY IF EXISTS "Allow public update for activity_log" ON public.activity_log;
+    DROP POLICY IF EXISTS "Allow public delete for activity_log" ON public.activity_log;
+END $$;
+
 CREATE POLICY "Allow public read for team_members" ON public.team_members FOR SELECT USING (true);
 CREATE POLICY "Allow public insert for team_members" ON public.team_members FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow public update for team_members" ON public.team_members FOR UPDATE USING (true);
@@ -211,16 +282,20 @@ CREATE TRIGGER update_clients_updated_at
   EXECUTE FUNCTION public.update_updated_at_column();
 
 -- Insert sample team member
-INSERT INTO public.team_members (full_name, email, role) VALUES 
+INSERT INTO public.team_members (full_name, email, role) 
+VALUES 
   ('Fiona McCarthy', 'fiona@fpms.ie', 'advisor'),
-  ('Niall O''Brien', 'niall@fpms.ie', 'advisor');
+  ('Niall O''Brien', 'niall@fpms.ie', 'advisor')
+ON CONFLICT (email) DO NOTHING;
 
 -- Insert sample clients
-INSERT INTO public.clients (full_name, email, phone, stage, products, cashcalc_complete, typeform_complete, docs_required, docs_received, notes, assigned_advisor_id) VALUES 
+INSERT INTO public.clients (full_name, email, phone, stage, products, cashcalc_complete, typeform_complete, docs_required, docs_received, notes, assigned_advisor_id) 
+VALUES 
   ('John O''Brien', 'john@email.com', '087 123 4567', 'awaiting_data', ARRAY['Pension', 'Life Cover'], false, true, 4, 2, 'Discussed retirement planning. Interested in AVCs.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie')),
   ('Mary Murphy', 'mary@email.com', '086 234 5678', 'awaiting_data', ARRAY['Income Protection'], true, false, 3, 1, 'Self-employed, needs income protection.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie')),
   ('Patrick Kelly', 'patrick@email.com', '085 345 6789', 'new_booking', ARRAY['Pension'], false, false, 0, 0, '', (SELECT id FROM public.team_members WHERE email = 'niall@fpms.ie')),
   ('Sarah Walsh', 'sarah@email.com', '083 456 7890', 'discovery_complete', ARRAY['Savings', 'Pension'], false, false, 4, 0, 'Young professional, starting savings plan for house deposit.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie')),
   ('Gavin Ashe', 'gavin@email.com', '087 567 8901', 'letter_pending', ARRAY['Protection', 'Pension'], true, true, 5, 5, 'Documents complete, letter preparation in progress.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie')),
   ('Laura Carrick', 'laura@email.com', '086 678 9012', 'awaiting_signature', ARRAY['Pension Review'], true, true, 3, 3, 'Signed but awaiting policy number.', (SELECT id FROM public.team_members WHERE email = 'niall@fpms.ie')),
-  ('Michael Byrne', 'michael@email.com', '085 789 0123', 'recommendation_call', ARRAY['Mortgage Protection', 'Life Cover'], true, true, 4, 4, 'Ready for recommendation meeting.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie'));
+  ('Michael Byrne', 'michael@email.com', '085 789 0123', 'recommendation_call', ARRAY['Mortgage Protection', 'Life Cover'], true, true, 4, 4, 'Ready for recommendation meeting.', (SELECT id FROM public.team_members WHERE email = 'fiona@fpms.ie'))
+ON CONFLICT (email) DO NOTHING;

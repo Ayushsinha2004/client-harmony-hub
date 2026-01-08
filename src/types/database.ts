@@ -1,12 +1,14 @@
-export type PipelineStage = 
-  | 'new_booking' 
-  | 'discovery_complete' 
-  | 'awaiting_data' 
-  | 'recommendation_call' 
-  | 'letter_pending' 
+export type PipelineStage =
+  | 'new_booking'
+  | 'discovery_complete'
+  | 'awaiting_data'
+  | 'recommendation_call'
+  | 'letter_pending'
   | 'awaiting_signature';
 
-export type ClientStatus = 'lead' | 'active_client' | 'inactive';
+export type ClientStatus = 'lead' | 'client' | 'inactive';
+export type EmailStatus = 'draft' | 'scheduled' | 'sent' | 'failed';
+
 
 export interface Client {
   id: string;
@@ -52,10 +54,24 @@ export interface ActivityLog {
   details: string | null;
   performed_by: string | null;
   created_at: string;
-  // Joined data
   client?: Client;
   performer?: TeamMember;
 }
+
+export interface Email {
+  id: string;
+  client_id: string;
+  subject: string;
+  body: string;
+  to_email: string;
+  cc_emails: string[] | null;
+  status: EmailStatus;
+  template_type: string | null;
+  sent_at: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 
 export interface StageConfig {
   id: PipelineStage;

@@ -1,6 +1,7 @@
 import { Client } from '@/types/database';
 import { AvatarInitials } from '@/components/ui/avatar-initials';
 import { format } from 'date-fns';
+import { Users } from 'lucide-react';
 
 interface ClientsGridProps {
   clients: Client[];
@@ -8,6 +9,20 @@ interface ClientsGridProps {
 }
 
 export function ClientsGrid({ clients, onClientClick }: ClientsGridProps) {
+  if (clients.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center mb-4">
+          <Users className="w-8 h-8 text-muted-foreground" />
+        </div>
+        <h3 className="text-lg font-semibold text-foreground mb-2">No clients yet</h3>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Clients will appear here once leads are converted using the "Mark as Client" button in the pipeline.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-3 gap-4">
       {clients.map((client) => {

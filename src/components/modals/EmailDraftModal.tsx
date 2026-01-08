@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { X, Mail, Send, Pencil, Paperclip, Upload, FileText, Trash2 } from 'lucide-react';
-import { Client } from '@/types/database';
+import { useState, useEffect } from 'react';
+import { X, Mail, Send, Pencil, Paperclip, Upload, FileText, Trash2, Loader2 } from 'lucide-react';
+import { Client, Email } from '@/types/database';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { useClients } from '@/hooks/useClients';
 
 interface UploadedFile {
   id: string;
@@ -16,83 +17,109 @@ interface EmailDraftModalProps {
   onClose: () => void;
 }
 
-const emailTemplates = {
-  discovery: (lead: Client) => ({
-    subject: `Follow-up from your Discovery Call - ${lead.full_name}`,
-    to: lead.email,
-    cc: 'admin@fpms.ie',
-    body: `Dear ${lead.full_name.split(' ')[0]},
-
-Thank you for taking the time to speak with us during your discovery call. It was great to learn more about your financial goals.
-
-Based on our conversation, I've identified the following areas we can help you with:
-${lead.products.map(p => `• ${p}`).join('\n')}
-
-Next Steps:
-1. Please complete your CashCalc fact find (link in separate email)
-2. Complete the risk profiler questionnaire
-3. Gather the required documents
-
-If you have any questions, please don't hesitate to reach out.
-
-Kind regards,
-Fiona McCarthy
-Financial Advisor`,
-    attachments: ['Document_Checklist.pdf', 'Privacy_Notice.pdf'],
-  }),
-  chase: (lead: Client) => ({
-    subject: `Reminder: Outstanding Items - ${lead.full_name}`,
-    to: lead.email,
-    cc: 'admin@fpms.ie',
-    body: `Dear ${lead.full_name.split(' ')[0]},
-
-I hope this email finds you well. I wanted to follow up regarding your financial planning application.
-
-We're still waiting for the following items:
-${!lead.cashcalc_complete ? '• CashCalc fact find completion\n' : ''}${!lead.typeform_complete ? '• Risk profiler questionnaire\n' : ''}${lead.docs_received < lead.docs_required ? `• Outstanding documents (${lead.docs_required - lead.docs_received} remaining)\n` : ''}
-Once we receive these items, we can proceed to the next stage of your application.
-
-Please let me know if you need any assistance or have any questions.
-
-Kind regards,
-Fiona McCarthy
-Financial Advisor`,
-    attachments: [],
-  }),
-  letter: (lead: Client) => ({
-    subject: `Your Letter of Recommendation - ${lead.full_name}`,
-    to: lead.email,
-    cc: 'admin@fpms.ie',
-    body: `Dear ${lead.full_name.split(' ')[0]},
-
-Please find attached your Letter of Recommendation outlining our proposed solutions for:
-${lead.products.map(p => `• ${p}`).join('\n')}
-
-Please review the document carefully and let me know if you have any questions.
-
-Once you're happy to proceed, please sign the attached document using Adobe Sign (link will be sent separately).
-
-Kind regards,
-Fiona McCarthy
-Financial Advisor`,
-    attachments: ['Letter_of_Recommendation.pdf', 'Product_Illustrations.pdf'],
-  }),
-};
-
 export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
-  const template = emailTemplates[type](lead);
-  const [attachments, setAttachments] = useState(template.attachments);
+  const [email, setEmail] = useState<Partial<Email> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [body, setBody] = useState('');
+  const [attachments, setAttachments] = useState<string[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const { toast } = useToast();
+  const { getEmailDraft, updateEmail } = useClients();
 
-  const handleSendEmail = () => {
-    const totalAttachments = attachments.length + uploadedFiles.length;
-    toast({
-      title: 'Email Sent',
-      description: `Email sent to ${lead.full_name} with ${totalAttachments} attachment${totalAttachments !== 1 ? 's' : ''}`,
-    });
-    onClose();
+  useEffect(() => {
+    const fetchDraft = async () => {
+      setLoading(true);
+      const draft = await getEmailDraft(lead.id, type);
+      console.log('Fetching draft for:', { clientId: lead.id, type, found: !!draft });
+
+      if (draft) {
+        setEmail(draft);
+        setBody(draft.body);
+      } else {
+        const fallbackBody = `Dear ${lead.full_name.split(' ')[0]},\n\n[Draft not found in database for this client and type '${type}'].`;
+        setEmail({
+          to_email: lead.email,
+          subject: `${type.charAt(0).toUpperCase() + type.slice(1)} - ${lead.full_name}`,
+          body: fallbackBody,
+        });
+        setBody(fallbackBody);
+      }
+      setLoading(false);
+    };
+
+    fetchDraft();
+  }, [lead.id, type]);
+
+  const handleSendEmail = async () => {
+    setSaving(true);
+
+    // Prepare data for webhook
+    const payload = {
+      to_email: email?.to_email || lead.email,
+      cc_emails: email?.cc_emails || [],
+      subject: email?.subject || `${type.charAt(0).toUpperCase() + type.slice(1)} - ${lead.full_name}`,
+      body: body,
+      client_id: lead.id,
+      client_name: lead.full_name,
+      template_type: type,
+      attachments: [
+        ...attachments,
+        ...uploadedFiles.map(f => f.name)
+      ]
+    };
+
+    try {
+      console.log('Sending to webhook:', payload);
+      const response = await fetch('https://braind.app.n8n.cloud/webhook/510b6a83-bc19-42ac-b72d-fbace767fe63', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error('Failed to send to webhook');
+
+      // Mark as sent in Supabase
+      if (email?.id) {
+        await updateEmail(email.id, {
+          body,
+          status: 'sent',
+          sent_at: new Date().toISOString()
+        });
+      }
+
+      const totalAttachments = attachments.length + uploadedFiles.length;
+      toast({
+        title: 'Email Sent',
+        description: `Email sent successfully to ${lead.full_name}`,
+      });
+      onClose();
+    } catch (error) {
+      console.error('Webhook Error:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to send email through the delivery system.',
+        variant: 'destructive'
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!email?.id) return;
+    setSaving(true);
+    const success = await updateEmail(email.id, { body });
+    if (success) {
+      toast({
+        title: 'Draft Saved',
+        description: 'Your changes have been saved to the database.',
+      });
+    }
+    setSaving(false);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -130,6 +157,17 @@ export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-foreground/50 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-fade-in">
+        <div className="bg-card rounded-2xl p-12 text-center">
+          <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground font-medium">Fetching email draft...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-foreground/50 backdrop-blur-sm z-[200] flex items-center justify-center p-6 animate-fade-in">
       <div className="bg-card rounded-2xl w-full max-w-[750px] max-h-[90vh] overflow-hidden shadow-2xl animate-scale-in">
@@ -159,29 +197,33 @@ export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5">To</p>
               <div className="px-3.5 py-2.5 bg-secondary/50 rounded-lg text-sm text-foreground border border-border">
-                {template.to}
+                {email?.to_email}
               </div>
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5">CC</p>
               <div className="px-3.5 py-2.5 bg-secondary/50 rounded-lg text-sm text-foreground border border-border">
-                {template.cc}
+                {email?.cc_emails && email.cc_emails.length > 0
+                  ? email.cc_emails.join(', ')
+                  : <span className="text-muted-foreground italic">No CC recipients</span>}
               </div>
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5">Subject</p>
               <div className="px-3.5 py-2.5 bg-secondary/50 rounded-lg text-sm text-foreground border border-border">
-                {template.subject}
+                {email?.subject}
               </div>
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground mb-1.5">Body (click to edit)</p>
               <div
+                key={email?.id || 'empty'}
                 contentEditable
                 suppressContentEditableWarning
-                className="min-h-[200px] px-3.5 py-3 bg-card border border-border rounded-lg text-sm text-foreground leading-relaxed whitespace-pre-wrap focus:outline-none focus:border-info focus:ring-2 focus:ring-info/10"
+                onBlur={(e) => setBody(e.currentTarget.innerText)}
+                className="min-h-[250px] px-3.5 py-3 bg-card border border-border rounded-lg text-sm text-foreground leading-relaxed whitespace-pre-wrap focus:outline-none focus:border-info focus:ring-2 focus:ring-info/10"
               >
-                {template.body}
+                {body}
               </div>
             </div>
 
@@ -254,9 +296,8 @@ export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => document.getElementById('email-file-upload')?.click()}
-                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-                  dragOver ? 'border-info bg-blue-50' : 'border-border bg-secondary/50 hover:border-info hover:bg-blue-50'
-                }`}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${dragOver ? 'border-info bg-blue-50' : 'border-border bg-secondary/50 hover:border-info hover:bg-blue-50'
+                  }`}
               >
                 <div className="w-12 h-12 mx-auto mb-3 bg-gradient-blue rounded-xl flex items-center justify-center text-primary-foreground">
                   <Upload className="w-5 h-5" />
@@ -280,16 +321,16 @@ export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
 
         {/* Footer */}
         <div className="px-6 py-4 bg-secondary/50 border-t border-border flex justify-between items-center">
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
           <div className="flex gap-2.5">
-            <Button variant="outline">
-              <Pencil className="w-4 h-4 mr-2" />
+            <Button variant="outline" onClick={handleSaveDraft} disabled={saving || !email?.id}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
               Save Draft
             </Button>
-            <Button onClick={handleSendEmail} className="bg-gradient-primary text-primary-foreground">
-              <Send className="w-4 h-4 mr-2" />
+            <Button onClick={handleSendEmail} disabled={saving} className="bg-gradient-primary text-primary-foreground">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
               Approve & Send
             </Button>
           </div>
@@ -298,3 +339,4 @@ export function EmailDraftModal({ lead, type, onClose }: EmailDraftModalProps) {
     </div>
   );
 }
+

@@ -10,22 +10,29 @@ export function useClients() {
 
   const fetchClients = async () => {
     try {
-      const { data, error } = await supabase
+      setLoading(true);
+      const { data, error, status, statusText } = await supabase
         .from('clients')
-        .select(`
-          *,
-          advisor:team_members!clients_assigned_advisor_id_fkey(*)
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      
+      if (error) {
+        console.error('Supabase Error Details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          status,
+          statusText
+        });
+        throw error;
+      }
+
       setClients(data as Client[] || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching clients:', error);
       toast({
-        title: 'Error',
-        description: 'Failed to fetch clients',
+        title: 'Connection Error',
+        description: error.message || 'Failed to fetch clients from Supabase. Please check your API keys and RLS policies.',
         variant: 'destructive',
       });
     } finally {
@@ -70,7 +77,7 @@ export function useClients() {
     try {
       const { error } = await supabase
         .from('clients')
-        .update(updates)
+        .update(updates as any)
         .eq('id', clientId);
 
       if (error) throw error;
@@ -96,8 +103,8 @@ export function useClients() {
     try {
       const { error } = await supabase
         .from('clients')
-        .update({ 
-          status: 'active_client' as const,
+        .update({
+          status: 'client' as any,
           client_since: new Date().toISOString().split('T')[0]
         })
         .eq('id', clientId);
@@ -121,6 +128,41 @@ export function useClients() {
       toast({
         title: 'Error',
         description: 'Failed to convert lead to client',
+        variant: 'destructive',
+      });
+      return false;
+    }
+  };
+
+  const markAsLead = async (clientId: string) => {
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({
+          status: 'lead' as any,
+          client_since: null
+        })
+        .eq('id', clientId);
+
+      if (error) throw error;
+
+      await supabase.from('activity_log').insert({
+        client_id: clientId,
+        action: 'marked_as_lead',
+        details: 'Client converted back to lead',
+      });
+
+      toast({
+        title: 'Lead Created',
+        description: 'Client has been converted back to a lead',
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error marking as lead:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to convert client to lead',
         variant: 'destructive',
       });
       return false;
@@ -154,9 +196,9 @@ export function useClients() {
 
   // Computed values
   const leads = clients.filter(c => c.status === 'lead');
-  const activeClients = clients.filter(c => c.status === 'active_client');
-  
-  const getClientsByStage = (stage: PipelineStage) => 
+  const activeClients = clients.filter(c => c.status === 'client');
+
+  const getClientsByStage = (stage: PipelineStage) =>
     leads.filter(c => c.stage === stage);
 
   const stagesCounts = {
@@ -168,7 +210,7 @@ export function useClients() {
     awaiting_signature: getClientsByStage('awaiting_signature').length,
   };
 
-  const actionRequiredCount = leads.filter(c => 
+  const actionRequiredCount = leads.filter(c =>
     (!c.cashcalc_complete && c.stage !== 'new_booking') ||
     (!c.typeform_complete && c.stage !== 'new_booking') ||
     c.stage === 'awaiting_signature'
@@ -185,6 +227,166 @@ export function useClients() {
     updateClientStage,
     updateClient,
     markAsClient,
+    markAsLead,
     refetch: fetchClients,
+    getEmailDraft: async (clientId: string, type: string) => {
+      try {
+        console.log(`--- Searching for ${type} email for client ${clientId} ---`);
+
+        // 1. Try to find the specific template type with status 'draft'
+        let { data, error } = await supabase
+          .from('emails')
+          .select('*')
+          .eq('client_id', clientId)
+          .ilike('template_type', type)
+          .eq('status', 'draft')
+          .order('created_at', { ascending: false })
+          .maybeSingle();
+
+        if (error) throw error;
+
+        // 2. If no draft found, try to find any email with matching template_type (regardless of status)
+        if (!data) {
+          console.warn(`No '${type}' draft found. Trying any email with template_type '${type}'...`);
+          const { data: anyTypeData, error: anyTypeError } = await supabase
+            .from('emails')
+            .select('*')
+            .eq('client_id', clientId)
+            .ilike('template_type', type)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (anyTypeError) throw anyTypeError;
+          data = anyTypeData;
+        }
+
+        // 3. Fallback: Get most recent email for this client (any type, any status)
+        if (!data) {
+          console.warn(`No '${type}' email found. Falling back to most recent email for this client...`);
+          const { data: fallbackData, error: fallbackError } = await supabase
+            .from('emails')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (fallbackError) throw fallbackError;
+          data = fallbackData;
+        }
+
+        if (data) {
+          console.log('✅ Found email:', data.subject, '| template_type:', data.template_type, '| status:', data.status);
+        } else {
+          console.error('❌ No email found at all for this client.');
+        }
+
+        return data as any;
+      } catch (error) {
+        console.error('Error fetching email draft:', error);
+        return null;
+      }
+    },
+    updateEmail: async (emailId: string, updates: any) => {
+      try {
+        const { error } = await supabase
+          .from('emails')
+          .update(updates)
+          .eq('id', emailId);
+
+        if (error) throw error;
+        return true;
+      } catch (error) {
+        console.error('Error updating email:', error);
+        return false;
+      }
+    },
+    getMeetingActionItems: async (clientId: string) => {
+      try {
+        const { data, error } = await supabase
+          .from('meetings')
+          .select('id, action_items')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) throw error;
+        return data;
+      } catch (error) {
+        console.error('Error fetching meeting action items:', error);
+        return null;
+      }
+    },
+    updateMeetingActionItems: async (meetingId: string, actionItems: string) => {
+      try {
+        const { error } = await supabase
+          .from('meetings')
+          .update({ action_items: actionItems })
+          .eq('id', meetingId);
+
+        if (error) throw error;
+
+        toast({
+          title: 'Saved',
+          description: 'Action items have been updated',
+        });
+        return true;
+      } catch (error) {
+        console.error('Error updating meeting action items:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to save action items',
+          variant: 'destructive',
+        });
+        return false;
+      }
+    },
+    createMeetingWithActionItems: async (clientId: string, actionItems: string) => {
+      try {
+        const { data, error } = await supabase
+          .from('meetings')
+          .insert({
+            client_id: clientId,
+            action_items: actionItems,
+            meeting_type: 'general',
+            status: 'completed'
+          })
+          .select('id')
+          .single();
+
+        if (error) throw error;
+
+        toast({
+          title: 'Saved',
+          description: 'Action items have been saved',
+        });
+        return data;
+      } catch (error) {
+        console.error('Error creating meeting:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to save action items',
+          variant: 'destructive',
+        });
+        return null;
+      }
+    },
+    getClientDocuments: async (clientId: string) => {
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('id, name, file_url')
+          .eq('client_id', clientId)
+          .order('uploaded_at', { ascending: false });
+
+        if (error) throw error;
+        return data || [];
+      } catch (error) {
+        console.error('Error fetching documents:', error);
+        return [];
+      }
+    },
   };
 }

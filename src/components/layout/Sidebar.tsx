@@ -1,25 +1,21 @@
 import { Home, Users, Kanban, FolderOpen, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-
-type Page = 'home' | 'leads' | 'pipeline' | 'clients';
+import { Link, useLocation } from 'react-router-dom';
 
 interface SidebarProps {
-  activePage: Page;
-  onNavigate: (page: Page) => void;
   leadsCount: number;
   clientsCount: number;
   actionRequiredCount: number;
 }
 
-export function Sidebar({ 
-  activePage, 
-  onNavigate, 
-  leadsCount, 
-  clientsCount, 
-  actionRequiredCount 
+export function Sidebar({
+  leadsCount,
+  clientsCount,
+  actionRequiredCount
 }: SidebarProps) {
   const { toast } = useToast();
+  const location = useLocation();
 
   const handleSync = () => {
     toast({
@@ -29,36 +25,40 @@ export function Sidebar({
   };
 
   const navItems = [
-    { id: 'home' as Page, label: 'Home', icon: Home },
-    { id: 'leads' as Page, label: 'Leads', icon: Users, badge: leadsCount, badgeType: 'danger' },
-    { id: 'pipeline' as Page, label: 'Pipeline', icon: Kanban, badge: actionRequiredCount > 0 ? actionRequiredCount : undefined, badgeType: 'danger' },
-    { id: 'clients' as Page, label: 'Clients', icon: FolderOpen, badge: clientsCount, badgeType: 'success' },
+    { id: 'home', path: '/home', label: 'Home', icon: Home },
+    { id: 'leads', path: '/leads', label: 'Leads', icon: Users, badge: leadsCount, badgeType: 'danger' },
+    { id: 'pipeline', path: '/pipeline', label: 'Pipeline', icon: Kanban, badge: actionRequiredCount > 0 ? actionRequiredCount : undefined, badgeType: 'danger' },
+    { id: 'clients', path: '/clients', label: 'Clients', icon: FolderOpen, badge: clientsCount, badgeType: 'success' },
   ];
+
+  const isPathActive = (path: string) => {
+    if (path === '/home' && (location.pathname === '/' || location.pathname === '/home')) return true;
+    return location.pathname === path;
+  };
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 bg-card/98 border-r border-border z-50 shadow-soft">
       {/* Logo */}
-      <div className="p-5 border-b border-border/50 flex items-center gap-3">
-        <div className="w-10 h-10 bg-gradient-primary rounded-xl flex items-center justify-center text-primary-foreground font-extrabold text-base shadow-primary">
-          FP
-        </div>
-        <div className="font-bold text-lg text-foreground">
-          FPMS <span className="text-primary">Dashboard</span>
-        </div>
+      <div className="p-5 border-b border-border/50 flex items-center justify-center">
+        <img
+          src="https://images.squarespace-cdn.com/content/v1/66d99eb292ba360244af5ddd/9729ebf5-26f6-4db6-ba2f-76914bb0adf4/FPM.png?format=1500w"
+          alt="FPM Logo"
+          className="h-12 w-auto object-contain"
+        />
       </div>
 
       {/* Navigation */}
       <nav className="p-3">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = activePage === item.id;
+          const isActive = isPathActive(item.path);
 
           return (
-            <button
+            <Link
               key={item.id}
-              onClick={() => onNavigate(item.id)}
+              to={item.path}
               className={cn(
-                "w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border-none text-sm font-semibold cursor-pointer transition-smooth mb-1 text-left",
+                "w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border-none text-sm font-semibold cursor-pointer transition-smooth mb-1 text-left no-underline",
                 isActive
                   ? "bg-gradient-primary text-primary-foreground shadow-primary"
                   : "bg-transparent text-muted-foreground hover:bg-secondary"
@@ -80,7 +80,7 @@ export function Sidebar({
                   {item.badge}
                 </span>
               )}
-            </button>
+            </Link>
           );
         })}
 
@@ -102,3 +102,4 @@ export function Sidebar({
     </aside>
   );
 }
+
